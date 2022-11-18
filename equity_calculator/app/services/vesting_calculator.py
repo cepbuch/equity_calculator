@@ -40,7 +40,7 @@ def form_vesting_schedule(option_grants: list[OptionGrant]) -> dict[date, int]:
     """
         Return dates-to-quantity when stock options are vested for all provided grants.
         Quantity of stock options from different grants vested on the same date is summed up.
-        On dates when no stock options are vested (before the cliff, for example) are not included.
+        Dates when no stock options are vested (before the cliff, for example) are not included.
     """
     date_to_vested_quantity: DefaultDict[date, int] = defaultdict(int)
 
@@ -52,16 +52,17 @@ def form_vesting_schedule(option_grants: list[OptionGrant]) -> dict[date, int]:
         after_cliff_start_date: date = grant.start_date
 
         if grant.cliff_months:
-            cliff_vest_quantity = monthly_vested_quantity_f * grant.cliff_months
             cliff_date = _get_next_vesting_date(
                 grant.start_date, grant.cliff_months, vesting_start_month_day
             )
 
-            cliff_vest_quantity_int = int(cliff_vest_quantity)
-            prev_month_decimal_remainder = cliff_vest_quantity - cliff_vest_quantity_int
+            cliff_vest_quantity, prev_month_decimal_remainder = _calculate_vested_quantity(
+                monthly_vested_quantity_f, prev_month_decimal_remainder,
+                months=grant.cliff_months
+            )
 
-            if cliff_vest_quantity_int:
-                date_to_vested_quantity[cliff_date] += cliff_vest_quantity_int
+            if cliff_vest_quantity:
+                date_to_vested_quantity[cliff_date] += cliff_vest_quantity
 
             after_cliff_start_date = cliff_date
 
@@ -74,13 +75,12 @@ def form_vesting_schedule(option_grants: list[OptionGrant]) -> dict[date, int]:
         )
 
         while timeline_date <= vesting_end_date:
-            vested_quantity = monthly_vested_quantity_f + prev_month_decimal_remainder
-            vested_quantity_int = int(vested_quantity)
+            vest_quantity, prev_month_decimal_remainder = _calculate_vested_quantity(
+                monthly_vested_quantity_f, prev_month_decimal_remainder,
+            )
 
-            if vested_quantity_int:
-                date_to_vested_quantity[timeline_date] += vested_quantity_int
-
-            prev_month_decimal_remainder = vested_quantity - vested_quantity_int
+            if vest_quantity:
+                date_to_vested_quantity[timeline_date] += vest_quantity
 
             timeline_date = _get_next_vesting_date(timeline_date, 1, vesting_start_month_day)
 
@@ -94,6 +94,17 @@ def _get_next_vesting_date(from_date: date, months: int, initial_day: int) -> da
         the last month day when there is not such day (e.g. not every month has 31 days)
     """
     return from_date + relativedelta(months=+months, day=initial_day)
+
+
+def _calculate_vested_quantity(
+    monthly_vested_quantity: Fraction,
+    prev_month_remainder: Fraction,
+    months: int = 1
+) -> tuple[int, Fraction]:
+    quantity_to_vest = monthly_vested_quantity * months + prev_month_remainder
+    vested_quantity = int(quantity_to_vest)
+    not_vested_remainder = quantity_to_vest - vested_quantity
+    return vested_quantity, not_vested_remainder
 
 
 def form_monthly_vesting_timeline(
